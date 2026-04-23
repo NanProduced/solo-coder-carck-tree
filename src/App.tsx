@@ -56,6 +56,9 @@ const App: React.FC = () => {
   const password1State = usePasswordStrength()
   const password2State = usePasswordStrength()
   
+  const [nodeCount1, setNodeCount1] = useState(0)
+  const [nodeCount2, setNodeCount2] = useState(0)
+  
   const [selectedGPU, setSelectedGPU] = useState<GPUCard>(getDefaultGPU())
   const [selectedAlgorithm, setSelectedAlgorithm] = useState<HashAlgorithm>('sha256')
 
@@ -115,7 +118,7 @@ const App: React.FC = () => {
                   密码破解可视化
                 </h1>
                 <p className="text-xs text-text-muted">
-                  Password Cracker Visualizer
+                  直观感受密码强度与暴力破解难度
                 </p>
               </div>
             </div>
@@ -163,8 +166,37 @@ const App: React.FC = () => {
       </header>
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+        <div className="mb-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 p-4 rounded-xl bg-dark-850/50 border border-dark-700">
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-text-muted">当前算力:</span>
+              <span className="font-mono-tech text-neon-cyan font-semibold">
+                {selectedGPU.name}
+              </span>
+              <span className="text-text-muted">·</span>
+              <span className="font-mono-tech text-neon-blue">
+                {selectedAlgorithm === 'md5' ? 'MD5' : 
+                 selectedAlgorithm === 'ntlm' ? 'NTLM' : 
+                 selectedAlgorithm === 'sha1' ? 'SHA-1' : 
+                 selectedAlgorithm === 'sha256' ? 'SHA-256' : 'bcrypt'}
+              </span>
+            </div>
+          </div>
+          <button
+            onClick={() => setShowSettings(!showSettings)}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm transition-all
+                       bg-dark-800 hover:bg-dark-700 border border-dark-600 hover:border-neon-blue/50"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+            </svg>
+            <span className="text-text-primary">{showSettings ? '收起设置' : '调整显卡和算法'}</span>
+          </button>
+        </div>
+
         {showSettings && (
-          <div className="mb-6 glass-panel rounded-xl p-6 animate-in">
+          <div className="mb-6 p-6 rounded-xl bg-dark-850/80 border border-dark-700 animate-in">
             <h2 className="text-lg font-semibold mb-4 text-text-primary">
               显卡与算法设置
             </h2>
@@ -177,11 +209,33 @@ const App: React.FC = () => {
           </div>
         )}
 
+        <div className={`mb-6 grid gap-6 ${
+          viewMode === 'compare' ? 'grid-cols-1 lg:grid-cols-2' : 'grid-cols-1'
+        }`}>
+          <div className="rounded-xl overflow-hidden border border-dark-700" style={{ height: '480px' }}>
+            <VisualizerCanvas
+              entropy={password1State.strength?.entropy || 0}
+              label={viewMode === 'compare' ? '可视化 A' : '实时可视化'}
+              onStatsChange={(count) => setNodeCount1(count)}
+            />
+          </div>
+
+          {viewMode === 'compare' && (
+            <div className="rounded-xl overflow-hidden border border-dark-700" style={{ height: '480px' }}>
+              <VisualizerCanvas
+                entropy={password2State.strength?.entropy || 0}
+                label="可视化 B"
+                onStatsChange={(count) => setNodeCount2(count)}
+              />
+            </div>
+          )}
+        </div>
+
         <div className={`grid gap-6 ${
           viewMode === 'compare' ? 'grid-cols-1 lg:grid-cols-2' : 'grid-cols-1'
         }`}>
           <div className="space-y-6">
-            <div className="glass-panel rounded-xl p-6">
+            <div className="p-6 rounded-xl bg-dark-850/50 border border-dark-700">
               <PasswordInput
                 label={viewMode === 'compare' ? '密码 A' : '输入密码'}
                 value={password1State.password}
@@ -192,8 +246,8 @@ const App: React.FC = () => {
                 colorScheme="blue"
               />
               
-              <div className="mt-4 pt-4 border-t border-dark-800">
-                <p className="text-xs text-text-muted mb-2">示例密码：</p>
+              <div className="mt-4 pt-4 border-t border-dark-700">
+                <p className="text-xs text-text-muted mb-2">试试这些示例：</p>
                 <div className="flex flex-wrap gap-2">
                   {samplePasswords.map(sample => (
                     <button
@@ -201,7 +255,7 @@ const App: React.FC = () => {
                       onClick={() => handleSampleClick(sample.value, 1)}
                       className="px-3 py-1.5 text-xs font-mono-tech bg-dark-800 hover:bg-dark-700 
                                text-text-secondary hover:text-text-primary rounded-md transition-colors
-                               border border-dark-700 hover:border-neon-blue/50"
+                               border border-dark-600 hover:border-neon-blue/50"
                     >
                       {sample.label}
                     </button>
@@ -220,7 +274,7 @@ const App: React.FC = () => {
 
           {viewMode === 'compare' && (
             <div className="space-y-6">
-              <div className="glass-panel rounded-xl p-6">
+              <div className="p-6 rounded-xl bg-dark-850/50 border border-dark-700">
                 <PasswordInput
                   label="密码 B"
                   value={password2State.password}
@@ -231,8 +285,8 @@ const App: React.FC = () => {
                   colorScheme="purple"
                 />
                 
-                <div className="mt-4 pt-4 border-t border-dark-800">
-                  <p className="text-xs text-text-muted mb-2">示例密码：</p>
+                <div className="mt-4 pt-4 border-t border-dark-700">
+                  <p className="text-xs text-text-muted mb-2">试试这些示例：</p>
                   <div className="flex flex-wrap gap-2">
                     {samplePasswords.map(sample => (
                       <button
@@ -240,7 +294,7 @@ const App: React.FC = () => {
                         onClick={() => handleSampleClick(sample.value, 2)}
                         className="px-3 py-1.5 text-xs font-mono-tech bg-dark-800 hover:bg-dark-700 
                                  text-text-secondary hover:text-text-primary rounded-md transition-colors
-                                 border border-dark-700 hover:border-neon-purple/50"
+                                 border border-dark-600 hover:border-neon-purple/50"
                       >
                         {sample.label}
                       </button>
@@ -259,28 +313,8 @@ const App: React.FC = () => {
           )}
         </div>
 
-        <div className={`mt-6 grid gap-6 ${
-          viewMode === 'compare' ? 'grid-cols-1 lg:grid-cols-2' : 'grid-cols-1'
-        }`}>
-          <div className="glass-panel rounded-xl overflow-hidden" style={{ height: '500px' }}>
-            <VisualizerCanvas
-              entropy={password1State.strength?.entropy || 0}
-              label={viewMode === 'compare' ? '可视化 A' : undefined}
-            />
-          </div>
-
-          {viewMode === 'compare' && (
-            <div className="glass-panel rounded-xl overflow-hidden" style={{ height: '500px' }}>
-              <VisualizerCanvas
-                entropy={password2State.strength?.entropy || 0}
-                label="可视化 B"
-              />
-            </div>
-          )}
-        </div>
-
         {viewMode === 'compare' && password1State.password && password2State.password && password1State.strength && password2State.strength && (
-          <div className="mt-6 glass-panel rounded-xl p-6">
+          <div className="mt-6 p-6 rounded-xl bg-dark-850/50 border border-dark-700">
             <h3 className="text-lg font-semibold mb-4 text-center">
               对比分析
             </h3>
@@ -303,11 +337,11 @@ const App: React.FC = () => {
                 <p className="text-sm text-text-muted mb-2">节点数量</p>
                 <div className="flex items-center justify-center gap-2">
                   <span className="text-neon-blue font-mono-tech">
-                    {Math.round(Math.pow(10, Math.min(password1State.strength.entropy / 10, 7))).toLocaleString()}
+                    {nodeCount1.toLocaleString()}
                   </span>
                   <span className="text-text-muted">vs</span>
                   <span className="text-neon-purple font-mono-tech">
-                    {Math.round(Math.pow(10, Math.min(password2State.strength.entropy / 10, 7))).toLocaleString()}
+                    {nodeCount2.toLocaleString()}
                   </span>
                 </div>
               </div>
@@ -326,7 +360,7 @@ const App: React.FC = () => {
 
         <div className="mt-8 text-center text-xs text-text-muted space-y-2">
           <p>
-            💡 此工具仅供教育目的，展示密码强度与暴力破解难度的关系
+            此工具仅供教育目的，展示密码强度与暴力破解难度的关系
           </p>
           <p>
             可视化节点数量基于熵值估算，GPU破解时间基于离线哈希攻击场景

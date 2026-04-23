@@ -164,6 +164,8 @@ export class WebGLRenderer {
   private frameCount: number = 0
   private fps: number = 0
   
+  private resizeHandler: (() => void) | null = null
+  
   constructor(canvas: HTMLCanvasElement, options?: Partial<RendererOptions>) {
     this.canvas = canvas
     this.options = { ...DEFAULT_OPTIONS, ...options }
@@ -171,7 +173,8 @@ export class WebGLRenderer {
     this.initWebGL()
     this.resize()
     
-    window.addEventListener('resize', () => this.resize())
+    this.resizeHandler = () => this.resize()
+    window.addEventListener('resize', this.resizeHandler)
   }
   
   private initWebGL(): void {
@@ -529,6 +532,11 @@ export class WebGLRenderer {
   
   public destroy(): void {
     this.stop()
+    
+    if (this.resizeHandler) {
+      window.removeEventListener('resize', this.resizeHandler)
+      this.resizeHandler = null
+    }
     
     const gl = this.gl
     if (gl) {

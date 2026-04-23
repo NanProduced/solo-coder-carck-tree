@@ -5,11 +5,13 @@ interface VisualizerCanvasProps {
   entropy: number
   colorScheme?: 'blue' | 'purple' | 'cyan' | 'green'
   label?: string
+  onStatsChange?: (nodeCount: number, fps: number) => void
 }
 
 export const VisualizerCanvas: React.FC<VisualizerCanvasProps> = ({
   entropy,
-  label
+  label,
+  onStatsChange
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const rendererRef = useRef<WebGLRenderer | null>(null)
@@ -25,6 +27,9 @@ export const VisualizerCanvas: React.FC<VisualizerCanvasProps> = ({
 
     renderer.onRender((nodeCount, fps) => {
       setStats({ nodeCount, fps })
+      if (onStatsChange) {
+        onStatsChange(nodeCount, fps)
+      }
     })
 
     renderer.start()
