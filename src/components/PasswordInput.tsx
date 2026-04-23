@@ -1,10 +1,12 @@
-import React, { useState, useCallback } from 'react'
-import { PasswordStrength, calculatePasswordStrength } from '@/lib/passwordEntropy'
+import React, { useState } from 'react'
+import { PasswordStrength } from '@/lib/passwordEntropy'
 
 interface PasswordInputProps {
   label: string
   value: string
-  onChange: (password: string, strength: PasswordStrength | null) => void
+  strength: PasswordStrength | null
+  isCalculating?: boolean
+  onChange: (password: string) => void
   placeholder?: string
   colorScheme?: 'blue' | 'purple'
 }
@@ -21,25 +23,18 @@ const STRENGTH_COLORS = [
 export const PasswordInput: React.FC<PasswordInputProps> = ({
   label,
   value,
+  strength,
+  isCalculating = false,
   onChange,
   placeholder = '输入密码...',
   colorScheme = 'blue'
 }) => {
   const [showPassword, setShowPassword] = useState(false)
-  const [strength, setStrength] = useState<PasswordStrength | null>(null)
   const [isFocused, setIsFocused] = useState(false)
 
-  const handleChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const password = e.target.value
-    if (password) {
-      const calculated = calculatePasswordStrength(password)
-      setStrength(calculated)
-      onChange(password, calculated)
-    } else {
-      setStrength(null)
-      onChange('', null)
-    }
-  }, [onChange])
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    onChange(e.target.value)
+  }
 
   const toggleShowPassword = () => {
     setShowPassword(prev => !prev)
@@ -54,7 +49,13 @@ export const PasswordInput: React.FC<PasswordInputProps> = ({
         <label className="text-sm font-medium text-text-secondary">
           {label}
         </label>
-        {strength !== null && (
+        {isCalculating && (
+          <div className="flex items-center gap-2">
+            <div className="w-3 h-3 rounded-full border-2 border-neon-cyan border-t-transparent animate-spin" />
+            <span className="text-xs text-neon-cyan">计算中...</span>
+          </div>
+        )}
+        {strength !== null && !isCalculating && (
           <div className="flex items-center gap-2">
             <span 
               className="text-sm font-semibold"

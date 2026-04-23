@@ -30,14 +30,16 @@ export interface RendererOptions {
 }
 
 const DEFAULT_OPTIONS: RendererOptions = {
-  maxNodes: 100000,
+  maxNodes: 50000,
   nodeSize: 2,
-  repulsion: 100,
-  attraction: 0.01,
-  damping: 0.92,
-  gravity: 0.01,
-  centerForce: 0.05
+  repulsion: 60,
+  attraction: 0.005,
+  damping: 0.9,
+  gravity: 0.005,
+  centerForce: 0.02
 }
+
+const THROTTLE_DELAY = 150
 
 const VERTEX_SHADER_SOURCE = `
   attribute vec2 a_position;
@@ -66,30 +68,6 @@ const FRAGMENT_SHADER_SOURCE = `
     
     float alpha = 1.0 - smoothstep(0.3, 0.5, dist);
     gl_FragColor = vec4(v_color.rgb, v_color.a * alpha);
-  }
-`
-
-const EDGE_VERTEX_SHADER_SOURCE = `
-  attribute vec2 a_position;
-  attribute vec4 a_color;
-  
-  uniform mat4 u_projection;
-  
-  varying vec4 v_color;
-  
-  void main() {
-    gl_Position = u_projection * vec4(a_position, 0.0, 1.0);
-    v_color = a_color;
-  }
-`
-
-const EDGE_FRAGMENT_SHADER_SOURCE = `
-  precision mediump float;
-  
-  varying vec4 v_color;
-  
-  void main() {
-    gl_FragColor = v_color;
   }
 `
 
@@ -159,23 +137,16 @@ export class WebGLRenderer {
   private canvas: HTMLCanvasElement
   private gl: WebGLRenderingContext | null = null
   private nodeProgram: WebGLProgram | null = null
-  private edgeProgram: WebGLProgram | null = null
   
   private nodes: Node[] = []
-  private edges: Edge[] = []
   
   private nodePositions: Float32Array = new Float32Array()
   private nodeColors: Float32Array = new Float32Array()
   private nodeSizes: Float32Array = new Float32Array()
   
-  private edgePositions: Float32Array = new Float32Array()
-  private edgeColors: Float32Array = new Float32Array()
-  
   private positionBuffer: WebGLBuffer | null = null
   private colorBuffer: WebGLBuffer | null = null
   private sizeBuffer: WebGLBuffer | null = null
-  private edgePositionBuffer: WebGLBuffer | null = null
-  private edgeColorBuffer: WebGLBuffer | null = null
   
   private animationFrameId: number = 0
   private isRunning: boolean = false
@@ -184,8 +155,9 @@ export class WebGLRenderer {
   private width: number = 0
   private height: number = 0
   
-  private targetNodeCount: number = 0
-  private currentEntropy: number = 0
+  private pendingEntropy: number = 0
+  private lastUpdateTime: number = 0
+  private isUpdatePending: boolean = false
   
   private onRenderCallback?: (nodeCount: number, fps: number) => void
   private lastFrameTime: number = 0
@@ -204,14 +176,15 @@ export class WebGLRenderer {
   
   private initWebGL(): void {
     this.gl = this.canvas.getContext('webgl', {
-      antialias: true,
+      antialias: false,
       alpha: true,
       premultipliedAlpha: false,
-      preserveDrawingBuffer: false
+      preserveDrawingBuffer: false,
+      powerPreference: 'default'
     })
     
     if (!this.gl) {
-      console.warn('WebGL not supported, falling back to canvas 2D')
+      console.warn('WebGL not supported, falling back to simple rendering')
       return
     }
     
@@ -227,18 +200,9 @@ export class WebGLRenderer {
       this.nodeProgram = createProgram(gl, nodeVertexShader, nodeFragmentShader)
     }
     
-    const edgeVertexShader = createShader(gl, gl.VERTEX_SHADER, EDGE_VERTEX_SHADER_SOURCE)
-    const edgeFragmentShader = createShader(gl, gl.FRAGMENT_SHADER, EDGE_FRAGMENT_SHADER_SOURCE)
-    
-    if (edgeVertexShader && edgeFragmentShader) {
-      this.edgeProgram = createProgram(gl, edgeVertexShader, edgeFragmentShader)
-    }
-    
     this.positionBuffer = gl.createBuffer()
     this.colorBuffer = gl.createBuffer()
     this.sizeBuffer = gl.createBuffer()
-    this.edgePositionBuffer = gl.createBuffer()
-    this.edgeColorBuffer = gl.createBuffer()
   }
   
   private resize(): void {
@@ -257,11 +221,27 @@ export class WebGLRenderer {
   }
   
   public setEntropy(entropy: number): void {
-    this.currentEntropy = entropy
-    const nodeCount = this.getNodeCountFromEntropy(entropy)
-    this.targetNodeCount = nodeCount
+    this.pendingEntropy = entropy
+    this.isUpdatePending = true
+  }
+  
+  private processPendingUpdate(): void {
+    if (!this.isUpdatePending) return
     
-    this.updateNodeTree()
+    const now = performance.now()
+    if (now - this.lastUpdateTime < THROTTLE_DELAY) return
+    
+    this.lastUpdateTime = now
+    this.isUpdatePending = false
+    
+    const targetCount = this.getNodeCountFromEntropy(this.pendingEntropy)
+    const currentCount = this.nodes.length
+    
+    if (targetCount === currentCount) {
+      return
+    }
+    
+    this.updateNodeTree(targetCount)
   }
   
   private getNodeCountFromEntropy(entropy: number): number {
@@ -275,23 +255,20 @@ export class WebGLRenderer {
       return Math.floor(Math.pow(10, (entropy + 10) / 8))
     } else if (entropy < 50) {
       return Math.floor(Math.pow(10, (entropy + 30) / 12))
-    } else if (entropy < 80) {
-      return Math.floor(maxNodes * (entropy / 80))
+    } else if (entropy < 70) {
+      return Math.floor(maxNodes * (entropy / 70))
     } else {
       return maxNodes
     }
   }
   
-  private updateNodeTree(): void {
-    const targetCount = Math.min(this.targetNodeCount, this.options.maxNodes)
+  private updateNodeTree(targetCount: number): void {
+    targetCount = Math.min(targetCount, this.options.maxNodes)
     const currentCount = this.nodes.length
-    
-    if (targetCount === currentCount) return
     
     if (targetCount < currentCount) {
       this.nodes = this.nodes.slice(0, targetCount)
-      this.edges = this.generateEdges(this.nodes)
-    } else {
+    } else if (targetCount > currentCount) {
       const nodesToAdd = targetCount - currentCount
       this.addNodes(nodesToAdd)
     }
@@ -314,15 +291,15 @@ export class WebGLRenderer {
       const hue = this.getHueForDepth(depth)
       const [r, g, b] = hslToRgb(hue, 0.7, 0.6)
       
-      const size = Math.max(1, this.options.nodeSize * (1.5 - depth * 0.2))
-      const alpha = Math.max(0.3, 0.9 - depth * 0.1)
+      const size = Math.max(1, this.options.nodeSize * (1.5 - depth * 0.15))
+      const alpha = Math.max(0.2, 0.8 - depth * 0.08)
       
       this.nodes.push({
         id,
         x: centerX + Math.cos(angle) * radius,
         y: centerY + Math.sin(angle) * radius,
-        vx: 0,
-        vy: 0,
+        vx: (Math.random() - 0.5) * 2,
+        vy: (Math.random() - 0.5) * 2,
         targetX: centerX + Math.cos(angle) * radius,
         targetY: centerY + Math.sin(angle) * radius,
         size,
@@ -332,8 +309,6 @@ export class WebGLRenderer {
         fixed: false
       })
     }
-    
-    this.edges = this.generateEdges(this.nodes)
   }
   
   private getNodeDepth(id: number): number {
@@ -342,152 +317,46 @@ export class WebGLRenderer {
   }
   
   private getInitialRadius(depth: number): number {
-    const baseRadius = Math.min(this.width, this.height) * 0.1
-    return baseRadius + depth * 40 + Math.random() * 20
+    const baseRadius = Math.min(this.width, this.height) * 0.08
+    return baseRadius + depth * 25 + Math.random() * 15
   }
   
   private getHueForDepth(depth: number): number {
     const baseHue = 0.65
-    const hueVariation = depth * 0.02
+    const hueVariation = depth * 0.015
     return (baseHue + hueVariation) % 1
-  }
-  
-  private generateEdges(nodes: Node[]): Edge[] {
-    const edges: Edge[] = []
-    
-    if (nodes.length <= 1) return edges
-    
-    for (let i = 1; i < nodes.length; i++) {
-      const parentId = Math.floor((i - 1) / 2)
-      if (parentId < nodes.length) {
-        edges.push({
-          from: parentId,
-          to: i,
-          depth: nodes[i].depth
-        })
-      }
-    }
-    
-    const maxEdges = Math.min(edges.length, 2000)
-    return edges.slice(0, maxEdges)
   }
   
   private allocateBuffers(): void {
     const nodeCount = this.nodes.length
-    const edgeCount = this.edges.length
     
     this.nodePositions = new Float32Array(nodeCount * 2)
     this.nodeColors = new Float32Array(nodeCount * 4)
     this.nodeSizes = new Float32Array(nodeCount)
-    
-    this.edgePositions = new Float32Array(edgeCount * 4)
-    this.edgeColors = new Float32Array(edgeCount * 8)
   }
   
-  private updatePhysics(dt: number = 1): void {
+  private updateSimple(dt: number = 1): void {
     const nodes = this.nodes
-    const edges = this.edges
-    
     const centerX = this.width / 2
     const centerY = this.height / 2
-    
-    const repulsion = this.options.repulsion
-    const attraction = this.options.attraction
     const damping = this.options.damping
     const gravity = this.options.gravity
-    const centerForce = this.options.centerForce
     
-    const gridSize = 100
-    const grid: Map<string, number[]> = new Map()
-    
-    for (let i = 0; i < nodes.length; i++) {
-      const node = nodes[i]
-      const gridX = Math.floor(node.x / gridSize)
-      const gridY = Math.floor(node.y / gridSize)
-      const key = `${gridX},${gridY}`
-      
-      if (!grid.has(key)) {
-        grid.set(key, [])
-      }
-      grid.get(key)!.push(i)
-      
-      node.vx += (centerX - node.x) * centerForce
-      node.vy += (centerY - node.y) * centerForce
-      
+    for (const node of nodes) {
       const angle = Math.atan2(node.y - centerY, node.x - centerX)
       const dist = Math.hypot(node.x - centerX, node.y - centerY)
-      const idealDist = 50 + node.depth * 30
+      const idealDist = 40 + node.depth * 20
       
       node.vx += Math.cos(angle) * (idealDist - dist) * gravity
       node.vy += Math.sin(angle) * (idealDist - dist) * gravity
-    }
-    
-    for (let i = 0; i < nodes.length; i++) {
-      const nodeA = nodes[i]
-      const gridX = Math.floor(nodeA.x / gridSize)
-      const gridY = Math.floor(nodeA.y / gridSize)
       
-      for (let dx = -1; dx <= 1; dx++) {
-        for (let dy = -1; dy <= 1; dy++) {
-          const key = `${gridX + dx},${gridY + dy}`
-          const cellNodes = grid.get(key)
-          if (!cellNodes) continue
-          
-          for (const j of cellNodes) {
-            if (j <= i) continue
-            
-            const nodeB = nodes[j]
-            
-            const dx = nodeB.x - nodeA.x
-            const dy = nodeB.y - nodeA.y
-            const distSq = dx * dx + dy * dy
-            const dist = Math.sqrt(distSq) || 0.1
-            
-            const minDist = 20
-            if (dist < minDist * 2) {
-              const force = repulsion * (1 / (distSq + 100)) * dt
-              const fx = (dx / dist) * force
-              const fy = (dy / dist) * force
-              
-              nodeA.vx -= fx
-              nodeA.vy -= fy
-              nodeB.vx += fx
-              nodeB.vy += fy
-            }
-          }
-        }
-      }
-    }
-    
-    for (const edge of edges) {
-      const nodeA = nodes[edge.from]
-      const nodeB = nodes[edge.to]
-      
-      if (!nodeA || !nodeB) continue
-      
-      const dx = nodeB.x - nodeA.x
-      const dy = nodeB.y - nodeA.y
-      const dist = Math.hypot(dx, dy) || 1
-      
-      const idealLength = 30 + edge.depth * 10
-      const force = (dist - idealLength) * attraction * dt
-      
-      const fx = (dx / dist) * force
-      const fy = (dy / dist) * force
-      
-      nodeA.vx += fx
-      nodeA.vy += fy
-      nodeB.vx -= fx
-      nodeB.vy -= fy
-    }
-    
-    for (const node of nodes) {
-      if (node.fixed) continue
+      node.vx += (Math.random() - 0.5) * 0.3
+      node.vy += (Math.random() - 0.5) * 0.3
       
       node.vx *= damping
       node.vy *= damping
       
-      const maxSpeed = 10
+      const maxSpeed = 5
       const speed = Math.hypot(node.vx, node.vy)
       if (speed > maxSpeed) {
         node.vx = (node.vx / speed) * maxSpeed
@@ -497,7 +366,7 @@ export class WebGLRenderer {
       node.x += node.vx * dt
       node.y += node.vy * dt
       
-      const margin = 50
+      const margin = 30
       node.x = Math.max(margin, Math.min(this.width - margin, node.x))
       node.y = Math.max(margin, Math.min(this.height - margin, node.y))
     }
@@ -512,7 +381,6 @@ export class WebGLRenderer {
     
     const dpr = window.devicePixelRatio || 1
     const nodes = this.nodes
-    const edges = this.edges
     
     gl.clearColor(0.06, 0.06, 0.1, 1.0)
     gl.clear(gl.COLOR_BUFFER_BIT)
@@ -528,53 +396,6 @@ export class WebGLRenderer {
       0, 0, -1, 0,
       -(right + left) / (right - left), -(top + bottom) / (top - bottom), 0, 1
     ])
-    
-    if (edges.length > 0 && this.edgeProgram) {
-      gl.useProgram(this.edgeProgram)
-      
-      const edgePosLoc = gl.getAttribLocation(this.edgeProgram, 'a_position')
-      const edgeColorLoc = gl.getAttribLocation(this.edgeProgram, 'a_color')
-      const edgeProjLoc = gl.getUniformLocation(this.edgeProgram, 'u_projection')
-      
-      let edgeIndex = 0
-      let edgeColorIndex = 0
-      
-      for (const edge of edges) {
-        const fromNode = nodes[edge.from]
-        const toNode = nodes[edge.to]
-        
-        if (!fromNode || !toNode) continue
-        
-        this.edgePositions[edgeIndex++] = fromNode.x
-        this.edgePositions[edgeIndex++] = fromNode.y
-        this.edgePositions[edgeIndex++] = toNode.x
-        this.edgePositions[edgeIndex++] = toNode.y
-        
-        const alpha = Math.max(0.1, 0.4 - edge.depth * 0.05)
-        const color = [0.4, 0.5, 0.8, alpha]
-        
-        for (let i = 0; i < 2; i++) {
-          this.edgeColors[edgeColorIndex++] = color[0]
-          this.edgeColors[edgeColorIndex++] = color[1]
-          this.edgeColors[edgeColorIndex++] = color[2]
-          this.edgeColors[edgeColorIndex++] = color[3]
-        }
-      }
-      
-      gl.bindBuffer(gl.ARRAY_BUFFER, this.edgePositionBuffer)
-      gl.bufferData(gl.ARRAY_BUFFER, this.edgePositions, gl.DYNAMIC_DRAW)
-      gl.enableVertexAttribArray(edgePosLoc)
-      gl.vertexAttribPointer(edgePosLoc, 2, gl.FLOAT, false, 0, 0)
-      
-      gl.bindBuffer(gl.ARRAY_BUFFER, this.edgeColorBuffer)
-      gl.bufferData(gl.ARRAY_BUFFER, this.edgeColors, gl.DYNAMIC_DRAW)
-      gl.enableVertexAttribArray(edgeColorLoc)
-      gl.vertexAttribPointer(edgeColorLoc, 4, gl.FLOAT, false, 0, 0)
-      
-      gl.uniformMatrix4fv(edgeProjLoc, false, projection)
-      
-      gl.drawArrays(gl.LINES, 0, edges.length * 2)
-    }
     
     gl.useProgram(this.nodeProgram)
     
@@ -629,22 +450,7 @@ export class WebGLRenderer {
     ctx.save()
     ctx.scale(dpr, dpr)
     
-    ctx.strokeStyle = 'rgba(100, 140, 200, 0.2)'
-    ctx.lineWidth = 0.5
-    
-    for (const edge of this.edges) {
-      const from = this.nodes[edge.from]
-      const to = this.nodes[edge.to]
-      if (!from || !to) continue
-      
-      ctx.beginPath()
-      ctx.moveTo(from.x, from.y)
-      ctx.lineTo(to.x, to.y)
-      ctx.stroke()
-    }
-    
     for (const node of this.nodes) {
-      const alpha = Math.floor(node.alpha * 255).toString(16).padStart(2, '0')
       const r = Math.floor(node.color[0] * 255)
       const g = Math.floor(node.color[1] * 255)
       const b = Math.floor(node.color[2] * 255)
@@ -672,9 +478,10 @@ export class WebGLRenderer {
       }
     }
     
-    const steps = this.nodes.length > 10000 ? 1 : 2
-    for (let i = 0; i < steps; i++) {
-      this.updatePhysics(0.8)
+    this.processPendingUpdate()
+    
+    if (this.nodes.length > 0) {
+      this.updateSimple(0.8)
     }
     
     this.render()
@@ -715,9 +522,8 @@ export class WebGLRenderer {
   
   public clear(): void {
     this.nodes = []
-    this.edges = []
-    this.targetNodeCount = 0
-    this.currentEntropy = 0
+    this.pendingEntropy = 0
+    this.isUpdatePending = false
     this.allocateBuffers()
   }
   
@@ -729,10 +535,7 @@ export class WebGLRenderer {
       if (this.positionBuffer) gl.deleteBuffer(this.positionBuffer)
       if (this.colorBuffer) gl.deleteBuffer(this.colorBuffer)
       if (this.sizeBuffer) gl.deleteBuffer(this.sizeBuffer)
-      if (this.edgePositionBuffer) gl.deleteBuffer(this.edgePositionBuffer)
-      if (this.edgeColorBuffer) gl.deleteBuffer(this.edgeColorBuffer)
       if (this.nodeProgram) gl.deleteProgram(this.nodeProgram)
-      if (this.edgeProgram) gl.deleteProgram(this.edgeProgram)
     }
   }
 }

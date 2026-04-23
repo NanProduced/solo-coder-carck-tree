@@ -1,29 +1,65 @@
-import React, { useState, useCallback } from 'react'
+import React, { useState, useCallback, useEffect, useTransition } from 'react'
 import { PasswordInput } from '@/components/PasswordInput'
 import { VisualizerCanvas } from '@/components/VisualizerCanvas'
 import { GPUSelector } from '@/components/GPUSelector'
 import { CrackTimeDisplay } from '@/components/CrackTimeDisplay'
 import { GPUCard, HashAlgorithm, getDefaultGPU, calculateCrackTime, CrackTimeResult } from '@/lib/gpuCompute'
-import { PasswordStrength } from '@/lib/passwordEntropy'
+import { PasswordStrength, calculatePasswordStrength } from '@/lib/passwordEntropy'
 
 type ViewMode = 'single' | 'compare'
+
+const DEBOUNCE_DELAY = 250
+
+function usePasswordStrength() {
+  const [password, setPassword] = useState('')
+  const [strength, setStrength] = useState<PasswordStrength | null>(null)
+  const [isPending, setIsPending] = useState(false)
+  const timeoutRef = React.useRef<NodeJS.Timeout | null>(null)
+
+  const setPasswordDebounced = useCallback((newPassword: string) => {
+    setPassword(newPassword)
+    setIsPending(true)
+
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current)
+    }
+
+    if (!newPassword) {
+      setStrength(null)
+      setIsPending(false)
+      return
+    }
+
+    timeoutRef.current = setTimeout(() => {
+      const calculated = calculatePasswordStrength(newPassword)
+      setStrength(calculated)
+      setIsPending(false)
+    }, DEBOUNCE_DELAY)
+  }, [])
+
+  useEffect(() => {
+    return () => {
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current)
+      }
+    }
+  }, [])
+
+  return { password, strength, isPending, setPasswordDebounced }
+}
 
 const App: React.FC = () => {
   const [viewMode, setViewMode] = useState<ViewMode>('single')
   const [showSettings, setShowSettings] = useState(false)
+  const [, startTransition] = useTransition()
   
-  const [password1, setPassword1] = useState('')
-  const [strength1, setStrength1] = useState<PasswordStrength | null>(null)
-  const [crackTime1, setCrackTime1] = useState<CrackTimeResult | null>(null)
-  
-  const [password2, setPassword2] = useState('')
-  const [strength2, setStrength2] = useState<PasswordStrength | null>(null)
-  const [crackTime2, setCrackTime2] = useState<CrackTimeResult | null>(null)
+  const password1State = usePasswordStrength()
+  const password2State = usePasswordStrength()
   
   const [selectedGPU, setSelectedGPU] = useState<GPUCard>(getDefaultGPU())
   const [selectedAlgorithm, setSelectedAlgorithm] = useState<HashAlgorithm>('sha256')
 
-  const updateCrackTime = useCallback((
+  const getCrackTime = useCallback((
     strength: PasswordStrength | null,
     gpu: GPUCard,
     algorithm: HashAlgorithm
@@ -33,33 +69,20 @@ const App: React.FC = () => {
     return calculateCrackTime(strength.guesses, hashRate)
   }, [])
 
-  const handlePassword1Change = useCallback((password: string, strength: PasswordStrength | null) => {
-    setPassword1(password)
-    setStrength1(strength)
-    setCrackTime1(updateCrackTime(strength, selectedGPU, selectedAlgorithm))
-  }, [selectedGPU, selectedAlgorithm, updateCrackTime])
-
-  const handlePassword2Change = useCallback((password: string, strength: PasswordStrength | null) => {
-    setPassword2(password)
-    setStrength2(strength)
-    setCrackTime2(updateCrackTime(strength, selectedGPU, selectedAlgorithm))
-  }, [selectedGPU, selectedAlgorithm, updateCrackTime])
-
   const handleGPUChange = useCallback((gpu: GPUCard) => {
-    setSelectedGPU(gpu)
-    setCrackTime1(updateCrackTime(strength1, gpu, selectedAlgorithm))
-    setCrackTime2(updateCrackTime(strength2, gpu, selectedAlgorithm))
-  }, [strength1, strength2, selectedAlgorithm, updateCrackTime])
+    startTransition(() => {
+      setSelectedGPU(gpu)
+    })
+  }, [])
 
   const handleAlgorithmChange = useCallback((algorithm: HashAlgorithm) => {
-    setSelectedAlgorithm(algorithm)
-    setCrackTime1(updateCrackTime(strength1, selectedGPU, algorithm))
-    setCrackTime2(updateCrackTime(strength2, selectedGPU, algorithm))
-  }, [strength1, strength2, selectedGPU, updateCrackTime])
+    startTransition(() => {
+      setSelectedAlgorithm(algorithm)
+    })
+  }, [])
 
-  const toggleViewMode = () => {
-    setViewMode(prev => prev === 'single' ? 'compare' : 'single')
-  }
+  const crackTime1 = getCrackTime(password1State.strength, selectedGPU, selectedAlgorithm)
+  const crackTime2 = getCrackTime(password2State.strength, selectedGPU, selectedAlgorithm)
 
   const samplePasswords = [
     { label: '弱密码', value: '123456' },
@@ -72,9 +95,9 @@ const App: React.FC = () => {
 
   const handleSampleClick = (value: string, target: 1 | 2) => {
     if (target === 1) {
-      handlePassword1Change(value, null)
+      password1State.setPasswordDebounced(value)
     } else {
-      handlePassword2Change(value, null)
+      password2State.setPasswordDebounced(value)
     }
   }
 
@@ -161,8 +184,10 @@ const App: React.FC = () => {
             <div className="glass-panel rounded-xl p-6">
               <PasswordInput
                 label={viewMode === 'compare' ? '密码 A' : '输入密码'}
-                value={password1}
-                onChange={handlePassword1Change}
+                value={password1State.password}
+                strength={password1State.strength}
+                isCalculating={password1State.isPending}
+                onChange={password1State.setPasswordDebounced}
                 placeholder="例如: 123456 或 ac@xzc(aNNx"
                 colorScheme="blue"
               />
@@ -187,7 +212,7 @@ const App: React.FC = () => {
 
             <CrackTimeDisplay
               crackTime={crackTime1}
-              strength={strength1}
+              strength={password1State.strength}
               hashRate={selectedGPU.hashRate[selectedAlgorithm]}
               colorScheme="blue"
             />
@@ -198,8 +223,10 @@ const App: React.FC = () => {
               <div className="glass-panel rounded-xl p-6">
                 <PasswordInput
                   label="密码 B"
-                  value={password2}
-                  onChange={handlePassword2Change}
+                  value={password2State.password}
+                  strength={password2State.strength}
+                  isCalculating={password2State.isPending}
+                  onChange={password2State.setPasswordDebounced}
                   placeholder="输入另一个密码进行对比"
                   colorScheme="purple"
                 />
@@ -224,7 +251,7 @@ const App: React.FC = () => {
 
               <CrackTimeDisplay
                 crackTime={crackTime2}
-                strength={strength2}
+                strength={password2State.strength}
                 hashRate={selectedGPU.hashRate[selectedAlgorithm]}
                 colorScheme="purple"
               />
@@ -237,8 +264,7 @@ const App: React.FC = () => {
         }`}>
           <div className="glass-panel rounded-xl overflow-hidden" style={{ height: '500px' }}>
             <VisualizerCanvas
-              entropy={strength1?.entropy || 0}
-              colorScheme="blue"
+              entropy={password1State.strength?.entropy || 0}
               label={viewMode === 'compare' ? '可视化 A' : undefined}
             />
           </div>
@@ -246,15 +272,14 @@ const App: React.FC = () => {
           {viewMode === 'compare' && (
             <div className="glass-panel rounded-xl overflow-hidden" style={{ height: '500px' }}>
               <VisualizerCanvas
-                entropy={strength2?.entropy || 0}
-                colorScheme="purple"
+                entropy={password2State.strength?.entropy || 0}
                 label="可视化 B"
               />
             </div>
           )}
         </div>
 
-        {viewMode === 'compare' && password1 && password2 && strength1 && strength2 && (
+        {viewMode === 'compare' && password1State.password && password2State.password && password1State.strength && password2State.strength && (
           <div className="mt-6 glass-panel rounded-xl p-6">
             <h3 className="text-lg font-semibold mb-4 text-center">
               对比分析
@@ -263,14 +288,14 @@ const App: React.FC = () => {
               <div>
                 <p className="text-sm text-text-muted mb-2">熵值差异</p>
                 <p className={`text-2xl font-bold font-mono-tech ${
-                  strength1.entropy > strength2.entropy ? 'text-neon-blue' : 
-                  strength1.entropy < strength2.entropy ? 'text-neon-purple' : 'text-text-secondary'
+                  password1State.strength.entropy > password2State.strength.entropy ? 'text-neon-blue' : 
+                  password1State.strength.entropy < password2State.strength.entropy ? 'text-neon-purple' : 'text-text-secondary'
                 }`}>
-                  {Math.abs(strength1.entropy - strength2.entropy).toFixed(1)} bits
+                  {Math.abs(password1State.strength.entropy - password2State.strength.entropy).toFixed(1)} bits
                 </p>
                 <p className="text-xs text-text-muted mt-1">
-                  {strength1.entropy > strength2.entropy ? 'A 更强' : 
-                   strength1.entropy < strength2.entropy ? 'B 更强' : '相同'}
+                  {password1State.strength.entropy > password2State.strength.entropy ? 'A 更强' : 
+                   password1State.strength.entropy < password2State.strength.entropy ? 'B 更强' : '相同'}
                 </p>
               </div>
               
@@ -278,11 +303,11 @@ const App: React.FC = () => {
                 <p className="text-sm text-text-muted mb-2">节点数量</p>
                 <div className="flex items-center justify-center gap-2">
                   <span className="text-neon-blue font-mono-tech">
-                    {Math.round(Math.pow(10, Math.min(strength1.entropy / 10, 7))).toLocaleString()}
+                    {Math.round(Math.pow(10, Math.min(password1State.strength.entropy / 10, 7))).toLocaleString()}
                   </span>
                   <span className="text-text-muted">vs</span>
                   <span className="text-neon-purple font-mono-tech">
-                    {Math.round(Math.pow(10, Math.min(strength2.entropy / 10, 7))).toLocaleString()}
+                    {Math.round(Math.pow(10, Math.min(password2State.strength.entropy / 10, 7))).toLocaleString()}
                   </span>
                 </div>
               </div>
