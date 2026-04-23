@@ -105,7 +105,7 @@ function isBirthdayFormat(str: string): { match: boolean; format: string; descri
       return { match: true, format: 'yyMMdd', description: `生日格式: ${year < 50 ? '20' : '19'}${year.toString().padStart(2, '0')}年${month}月${day}日` }
     }
   }
-  if (str.length === 8 && /^\d{4}\/\d{2}\/\d{2}$/.test(str)) {
+  if (str.length === 10 && /^\d{4}\/\d{2}\/\d{2}$/.test(str)) {
     const parts = str.split('/')
     const year = parseInt(parts[0])
     const month = parseInt(parts[1])
@@ -115,7 +115,7 @@ function isBirthdayFormat(str: string): { match: boolean; format: string; descri
       return { match: true, format: 'yyyy/MM/dd', description: `生日格式: ${year}年${month}月${day}日` }
     }
   }
-  if (str.length === 8 && /^\d{4}-\d{2}-\d{2}$/.test(str)) {
+  if (str.length === 10 && /^\d{4}-\d{2}-\d{2}$/.test(str)) {
     const parts = str.split('-')
     const year = parseInt(parts[0])
     const month = parseInt(parts[1])
