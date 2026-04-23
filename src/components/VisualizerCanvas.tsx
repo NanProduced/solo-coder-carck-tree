@@ -9,7 +9,6 @@ interface VisualizerCanvasProps {
 
 export const VisualizerCanvas: React.FC<VisualizerCanvasProps> = ({
   entropy,
-  colorScheme = 'blue',
   label
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -21,13 +20,7 @@ export const VisualizerCanvas: React.FC<VisualizerCanvasProps> = ({
     if (!canvasRef.current) return
 
     const renderer = new WebGLRenderer(canvasRef.current, {
-      maxNodes: 100000,
-      nodeSize: 2,
-      repulsion: 80,
-      attraction: 0.008,
-      damping: 0.9,
-      gravity: 0.008,
-      centerForce: 0.03
+      maxNodes: 30000
     })
 
     renderer.onRender((nodeCount, fps) => {

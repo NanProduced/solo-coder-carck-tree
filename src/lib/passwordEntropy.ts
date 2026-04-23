@@ -244,7 +244,7 @@ export function calculatePasswordStrength(password: string): PasswordStrength {
   const result = zxcvbn(password)
   const chinesePatterns = findChinesePatterns(password)
   
-  const baseEntropy = result.entropy ?? calculateBaseEntropy(password)
+  const baseEntropy = result.guesses > 0 ? Math.log2(result.guesses) : calculateBaseEntropy(password)
   
   let adjustedEntropy = baseEntropy
   let totalEntropyReduction = 0
@@ -278,7 +278,7 @@ export function calculatePasswordStrength(password: string): PasswordStrength {
     warning = '密码包含常见模式，容易被破解'
   }
   
-  let adjustedScore = result.score
+  let adjustedScore: number = result.score
   if (chinesePatterns.length > 0) {
     adjustedScore = Math.max(0, adjustedScore - 1)
   }
